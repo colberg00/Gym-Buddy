@@ -1,0 +1,10 @@
+{
+  "name": "Gym Buddy",
+  "short_name": "Gym Buddy",
+  "description": "Simple workout logger for the gym",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#141414",
+  "theme_color": "#141414",
+  "orientation": "portrait"
+}
