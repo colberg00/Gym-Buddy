@@ -727,6 +727,8 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         auth  = request.headers.get("Authorization", "")
         token = auth.removeprefix("Bearer ").strip()
         if token not in _tokens:
+            if request.method == "GET" and "text/html" in request.headers.get("Accept", ""):
+                return RedirectResponse("/app")
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return await call_next(request)
 
