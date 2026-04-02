@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Gym Buddy">
+  <link rel="manifest" href="manifest.json">
+  <title>Gym Buddy</title>
+  <style>
+    :root {
+      --bg: #141414;
+      --surface: #1e1e1e;
+      --border: #2e2e2e;
+      --text: #f0f0f0;
+      --muted: #888;
+      --accent: #4ade80;
+      --danger: #f87171;
+      --radius: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      padding-bottom: calc(84px + env(safe-area-inset-bottom));
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      padding-top: calc(10px + env(safe-area-inset-top));
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .header-left { flex: 1; min-width: 0; }
+
+    .header-left h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .header-left .date {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    /* ── Buttons ─────────────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      min-height: 44px;
+      transition: opacity 0.1s;
+      white-space: nowrap;
+    }
+    .btn:active { opacity: 0.65; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-sm {
+      padding: 8px 14px;
+      font-size: 14px;
+      min-height: 40px;
+    }
+
+    .btn-danger-ghost {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid transparent;
+      padding: 8px 12px;
+      font-size: 14px;
+      min-height: 40px;
+    }
+
+    .btn-icon {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 16px;
+      cursor: pointer;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .btn-icon:active { background: var(--border); }
+    .btn-icon:disabled { opacity: 0.25; pointer-events: none; }
+
+    /* ── Exercise list ───────────────────────────────────────────────────── */
+    .exercises {
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 64px 24px;
+      color: var(--muted);
+    }
+    .empty-state .icon { font-size: 52px; margin-bottom: 12px; }
+    .empty-state p { font-size: 15px; line-height: 1.5; }
+
+    /* ── Exercise card ───────────────────────────────────────────────────── */
+    .exercise-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .exercise-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 12px 6px;
+    }
+
+    .exercise-name-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 17px;
+      font-weight: 600;
+      outline: none;
+      min-width: 0;
+      padding: 4px 0;
+    }
+    .exercise-name-input::placeholder { color: var(--muted); font-weight: 400; }
+
+    /* ── Sets ────────────────────────────────────────────────────────────── */
+    .sets-table {
+      padding: 0 12px;
+    }
+
+    .set-row {
+      display: grid;
+      grid-template-columns: 22px 90px 1fr 36px;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .set-num {
+      font-size: 12px;
+      color: var(--muted);
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .weight-input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 500;
+      padding: 8px 10px;
+      width: 100%;
+      min-height: 42px;
+      -moz-appearance: textfield;
+    }
+    .weight-input::-webkit-outer-spin-button,
+    .weight-input::-webkit-inner-spin-button { -webkit-appearance: none; }
+    .weight-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+    .reps-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .reps-value {
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+      color: var(--accent);
+    }
+
+    .reps-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--border);
+      outline: none;
+      cursor: pointer;
+    }
+    .reps-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      box-shadow: 0 0 0 2px rgba(74,222,128,0.2);
+    }
+    .reps-slider::-moz-range-thumb {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      border: none;
+    }
+
+    /* ── Card footer ─────────────────────────────────────────────────────── */
+    .card-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px 12px;
+    }
+
+    /* ── App footer ──────────────────────────────────────────────────────── */
+    .footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      padding-bottom: calc(10px + env(safe-area-inset-bottom));
+      display: flex;
+      gap: 10px;
+    }
+    .footer .btn { flex: 1; }
+
+    /* ── Toast ───────────────────────────────────────────────────────────── */
+    .toast {
+      position: fixed;
+      top: calc(72px + env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%) translateY(-8px);
+      background: #333;
+      color: #fff;
+      padding: 10px 18px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+      z-index: 100;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── Confirmation sheet ──────────────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 50;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .modal {
+      background: var(--surface);
+      border-radius: 16px 16px 0 0;
+      padding: 24px 20px;
+      padding-bottom: calc(24px + env(safe-area-inset-bottom));
+      width: 100%;
+      max-width: 500px;
+    }
+    .modal h3 { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+    .modal p { color: var(--muted); font-size: 15px; margin-bottom: 20px; }
+    .modal-actions { display: flex; gap: 10px; }
+    .modal-actions .btn { flex: 1; }
+    .btn-confirm-danger { background: var(--danger); color: #fff; border: none; }
+
+    /* ── Import sheet ────────────────────────────────────────────────────────── */
+    .import-textarea {
+      width: 100%;
+      min-height: 140px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      padding: 10px 12px;
+      resize: vertical;
+      outline: none;
+      margin-bottom: 8px;
+      line-height: 1.5;
+    }
+    .import-textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    .import-error {
+      color: var(--danger);
+      font-size: 13px;
+      min-height: 18px;
+      margin-bottom: 12px;
+    }
+    .import-hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 10px;
+      line-height: 1.5;
+    }
+    .btn-confirm-primary { background: var(--accent); color: #000; border: none; }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-left">
+    <h1>Gym Buddy</h1>
+    <div class="date" id="date"></div>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-ghost btn-sm" onclick="newWorkout()">New</button>
+    <button class="btn btn-ghost btn-sm" onclick="openImport()">Import</button>
+    <button class="btn btn-primary btn-sm" onclick="addExercise()">+ Exercise</button>
+  </div>
+</header>
+
+<div class="exercises" id="exercises"></div>
+
+<footer class="footer">
+  <button class="btn btn-ghost" onclick="copyToClipboard()">📋 Copy</button>
+  <button class="btn btn-primary" onclick="sendToClaude()">Send to Claude</button>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// ── State ─────────────────────────────────────────────────────────────────────
+
+let exercises = [];
+let pendingAction = null;  // { type: 'deleteExercise'|'newWorkout', id? }
+
+// ── Persistence ───────────────────────────────────────────────────────────────
+
+function save() {
+  localStorage.setItem('gymbuddy_session', JSON.stringify(exercises));
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem('gymbuddy_session');
+    if (raw) exercises = JSON.parse(raw);
+  } catch (e) {
+    exercises = [];
+  }
+}
+
+// ── Mutations ─────────────────────────────────────────────────────────────────
+
+function addExercise() {
+  exercises.push({
+    id: uid(),
+    name: '',
+    sets: [{ id: uid(), weight: '', reps: 8 }]
+  });
+  save();
+  render();
+  setTimeout(() => {
+    const inputs = document.querySelectorAll('.exercise-name-input');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  }, 50);
+}
+
+function addSet(exerciseId) {
+  const ex = exercises.find(e => e.id === exerciseId);
+  if (!ex) return;
+  const last = ex.sets[ex.sets.length - 1];
+  ex.sets.push({ id: uid(), weight: last ? last.weight : '', reps: last ? last.reps : 8 });
+  save();
+  render();
+}
+
+function deleteSet(exerciseId, setId) {
+  const ex = exercises.find(e => e.id === exerciseId);
+  if (!ex || ex.sets.length <= 1) return;
+  ex.sets = ex.sets.filter(s => s.id !== setId);
+  save();
+  render();
+}
+
+function updateName(exerciseId, value) {
+  const ex = exercises.find(e => e.id === exerciseId);
+  if (ex) { ex.name = value; save(); }
+}
+
+function updateWeight(exerciseId, setId, value) {
+  const ex = exercises.find(e => e.id === exerciseId);
+  const s = ex && ex.sets.find(s => s.id === setId);
+  if (s) { s.weight = value; save(); }
+}
+
+function updateReps(exerciseId, setId, value) {
+  const ex = exercises.find(e => e.id === exerciseId);
+  const s = ex && ex.sets.find(s => s.id === setId);
+  if (!s) return;
+  s.reps = parseInt(value, 10);
+  save();
+  const label = document.getElementById('rv-' + setId);
+  if (label) label.textContent = s.reps + ' reps';
+}
+
+// ── Confirm actions ───────────────────────────────────────────────────────────
+
+function deleteExercise(id) {
+  const ex = exercises.find(e => e.id === id);
+  if (!ex) return;
+  pendingAction = { type: 'deleteExercise', id };
+  showModal(
+    'Delete exercise?',
+    escHtml(ex.name || 'Unnamed exercise')
+  );
+}
+
+function newWorkout() {
+  if (exercises.length === 0) return;
+  pendingAction = { type: 'newWorkout' };
+  showModal('Start new workout?', 'This will clear all current exercises.');
+}
+
+function confirmAction() {
+  if (!pendingAction) return;
+  if (pendingAction.type === 'deleteExercise') {
+    exercises = exercises.filter(e => e.id !== pendingAction.id);
+  } else if (pendingAction.type === 'newWorkout') {
+    exercises = [];
+  }
+  pendingAction = null;
+  save();
+  hideModal();
+  render();
+}
+
+// ── Import ────────────────────────────────────────────────────────────────────
+//
+// TODO (MCP connector): Implement an "export_to_frontend" tool in the MCP server
+// that generates the JSON payload below. Claude calls this tool to hand off a
+// structured workout plan to the frontend. The user pastes it here via Import.
+//
+// Future: a local WebSocket/SSE bridge could let the MCP tool push directly to
+// localStorage so the page auto-updates without a manual paste step.
+//
+// Import JSON schema (what Claude should output):
+// {
+//   "exercises": [
+//     {
+//       "name": "Bench Press",          // string — exercise name
+//       "sets": [
+//         { "weight": 100, "reps": 8 }, // weight: number or "" for blank; reps: 3–16
+//         { "weight": 105, "reps": 6 }
+//       ]
+//     }
+//   ]
+// }
+
+function openImport() {
+  removeModal();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Import from Claude</h3>
+      <p class="import-hint">Ask Claude to export a workout as JSON, then paste it below. It will replace your current exercises.</p>
+      <textarea
+        class="import-textarea"
+        id="import-input"
+        placeholder='{"exercises":[{"name":"Bench Press","sets":[{"weight":100,"reps":8},{"weight":105,"reps":6}]}]}'
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
+      ></textarea>
+      <div class="import-error" id="import-error"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="hideModal()">Cancel</button>
+        <button class="btn btn-confirm-primary" onclick="confirmImport()">Import</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) hideModal(); });
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('import-input').focus(), 50);
+}
+
+function confirmImport() {
+  const raw = (document.getElementById('import-input').value || '').trim();
+  const errEl = document.getElementById('import-error');
+  errEl.textContent = '';
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    errEl.textContent = 'Invalid JSON — check the format and try again.';
+    return;
+  }
+
+  if (!parsed || !Array.isArray(parsed.exercises)) {
+    errEl.textContent = 'Expected { "exercises": [...] } at the top level.';
+    return;
+  }
+
+  const imported = [];
+  for (const ex of parsed.exercises) {
+    if (typeof ex.name !== 'string') {
+      errEl.textContent = 'Each exercise must have a "name" string.';
+      return;
+    }
+    if (!Array.isArray(ex.sets) || ex.sets.length === 0) {
+      errEl.textContent = `"${ex.name}" must have at least one set.`;
+      return;
+    }
+    const sets = [];
+    for (const s of ex.sets) {
+      const reps = Math.min(16, Math.max(3, parseInt(s.reps, 10) || 8));
+      sets.push({ id: uid(), weight: s.weight !== undefined ? String(s.weight) : '', reps });
+    }
+    imported.push({ id: uid(), name: ex.name, sets });
+  }
+
+  exercises = imported;
+  save();
+  hideModal();
+  render();
+  showToast(`Imported ${imported.length} exercise${imported.length !== 1 ? 's' : ''}!`);
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+
+function render() {
+  const container = document.getElementById('exercises');
+
+  if (exercises.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="icon">🏋️</div>
+        <p>No exercises yet.<br>Tap <strong>+ Exercise</strong> to get started.</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = exercises.map(ex => `
+    <div class="exercise-card">
+      <div class="exercise-header">
+        <input
+          class="exercise-name-input"
+          type="text"
+          placeholder="Exercise name"
+          value="${escHtml(ex.name)}"
+          oninput="updateName('${ex.id}', this.value)"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="words"
+          spellcheck="false"
+        />
+      </div>
+      <div class="sets-table">
+        ${ex.sets.map((s, i) => `
+          <div class="set-row">
+            <span class="set-num">${i + 1}</span>
+            <input
+              class="weight-input"
+              type="number"
+              inputmode="decimal"
+              placeholder="kg"
+              value="${escHtml(String(s.weight))}"
+              oninput="updateWeight('${ex.id}', '${s.id}', this.value)"
+            />
+            <div class="reps-cell">
+              <span class="reps-value" id="rv-${s.id}">${s.reps} reps</span>
+              <input
+                class="reps-slider"
+                type="range"
+                min="3" max="16"
+                value="${s.reps}"
+                oninput="updateReps('${ex.id}', '${s.id}', this.value)"
+              />
+            </div>
+            <button
+              class="btn-icon"
+              onclick="deleteSet('${ex.id}', '${s.id}')"
+              ${ex.sets.length <= 1 ? 'disabled' : ''}
+              aria-label="Delete set"
+            >✕</button>
+          </div>
+        `).join('')}
+      </div>
+      <div class="card-footer">
+        <button class="btn btn-ghost btn-sm" onclick="addSet('${ex.id}')">+ Set</button>
+        <button class="btn btn-danger-ghost btn-sm" onclick="deleteExercise('${ex.id}')">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Format / Clipboard ────────────────────────────────────────────────────────
+
+function formatWorkout() {
+  const date = new Date().toLocaleDateString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  });
+  const lines = [`Gym Buddy — ${date}`, ''];
+  for (const ex of exercises) {
+    lines.push(ex.name || '(unnamed)');
+    ex.sets.forEach((s, i) => {
+      const w = s.weight !== '' ? `${s.weight} kg` : '— kg';
+      lines.push(`  Set ${i + 1}: ${w} × ${s.reps} reps`);
+    });
+    lines.push('');
+  }
+  return lines.join('\n').trimEnd();
+}
+
+async function copyToClipboard() {
+  const text = formatWorkout();
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    // Fallback for older iOS WebView
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+  showToast('Copied to clipboard!');
+}
+
+async function sendToClaude() {
+  await copyToClipboard();
+  showToast('Copied — paste into Claude!');
+  setTimeout(() => window.open('https://claude.ai/new', '_blank'), 300);
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+
+let toastTimer = null;
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+
+function showModal(title, body) {
+  removeModal();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${title}</h3>
+      <p>${body}</p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="hideModal()">Cancel</button>
+        <button class="btn btn-confirm-danger" onclick="confirmAction()">Confirm</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) hideModal(); });
+  document.body.appendChild(overlay);
+}
+
+function hideModal() {
+  removeModal();
+  pendingAction = null;
+}
+
+function removeModal() {
+  const el = document.getElementById('modal-overlay');
+  if (el) el.remove();
+}
+
+// ── PWA icon (generated at runtime for iOS homescreen) ────────────────────────
+
+(function() {
+  try {
+    const size = 180;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#141414';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = '#4ade80';
+    ctx.font = `bold ${size * 0.4}px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('GB', size / 2, size / 2);
+    const link = document.createElement('link');
+    link.rel = 'apple-touch-icon';
+    link.href = canvas.toDataURL('image/png');
+    document.head.appendChild(link);
+  } catch (e) {}
+})();
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+document.getElementById('date').textContent = new Date().toLocaleDateString('en-US', {
+  weekday: 'long', month: 'long', day: 'numeric'
+});
+
+load();
+render();
+</script>
+</body>
+</html>
