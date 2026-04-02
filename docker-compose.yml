@@ -30,6 +30,8 @@ services:
       SERVER_URL: ${SERVER_URL}
     volumes:
       - ./philosophy.md:/data/philosophy.md
+      - ./index.html:/data/index.html:ro
+      - ./manifest.json:/data/manifest.json:ro
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

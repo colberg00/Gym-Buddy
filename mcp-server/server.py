@@ -12,7 +12,7 @@ import psycopg2.extras
 import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from starlette.routing import Route, Mount
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -586,6 +586,8 @@ OPEN_PATHS = {
     "/oauth/token",
     "/authorize",
     "/token",
+    "/app",
+    "/manifest.json",
 }
 
 _AUTHORIZE_HTML = """\
@@ -621,6 +623,14 @@ _AUTHORIZE_HTML = """\
   </form>
 </body>
 </html>"""
+
+
+async def serve_app(request: Request) -> FileResponse:
+    return FileResponse("/data/index.html", media_type="text/html")
+
+
+async def serve_manifest(request: Request) -> FileResponse:
+    return FileResponse("/data/manifest.json", media_type="application/manifest+json")
 
 
 async def oauth_metadata(request: Request) -> JSONResponse:
@@ -751,6 +761,8 @@ app = Starlette(
         Route("/authorize",       oauth_authorize, methods=["GET", "POST"]),
         Route("/oauth/token",     oauth_token,     methods=["POST"]),
         Route("/token",           oauth_token,     methods=["POST"]),
+        Route("/app",             serve_app),
+        Route("/manifest.json",   serve_manifest),
         Mount("/",                app=_mcp_asgi_app),
     ],
     middleware=[Middleware(BearerAuthMiddleware)],
