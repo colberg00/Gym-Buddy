@@ -210,6 +210,65 @@ def log_bodyweight(
         conn.close()
 
 
+@mcp.tool()
+def log_workout(
+    exercises: list,
+    session_date: Optional[str] = None,
+    notes: Optional[str] = None,
+) -> dict:
+    """
+    Log a complete workout in one call — creates the session, logs all exercises and sets,
+    and returns a summary.
+    exercises must be a list of objects:
+      [{"name": "Bench Press", "sets": [{"weight_kg": 100, "reps": 8}, ...]}, ...]
+    Each set may also include an optional "notes" field.
+    session_date is ISO 8601 "YYYY-MM-DD"; defaults to today if omitted.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        if session_date:
+            cur.execute(
+                "INSERT INTO sessions (session_date, notes) VALUES (%s, %s) RETURNING id",
+                (session_date, notes),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO sessions (notes) VALUES (%s) RETURNING id",
+                (notes,),
+            )
+        session_id = cur.fetchone()[0]
+
+        total_sets = 0
+        total_volume = 0.0
+        logged_exercises = []
+
+        for ex_data in exercises:
+            exercise_id, canonical_name = resolve_exercise(cur, ex_data["name"])
+            for i, s in enumerate(ex_data["sets"], start=1):
+                weight_kg = float(s["weight_kg"])
+                reps = int(s["reps"])
+                cur.execute(
+                    "INSERT INTO sets (session_id, exercise_id, set_number, weight_kg, reps, notes) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    (session_id, exercise_id, i, weight_kg, reps, s.get("notes")),
+                )
+                total_volume += weight_kg * reps
+                total_sets += 1
+            logged_exercises.append({"exercise": canonical_name, "sets": len(ex_data["sets"])})
+
+        conn.commit()
+        return {
+            "session_id": session_id,
+            "session_date": session_date or "today",
+            "exercises": logged_exercises,
+            "total_sets": total_sets,
+            "total_volume_kg": round(total_volume, 1),
+        }
+    finally:
+        conn.close()
+
+
 # Query tools
 
 @mcp.tool()
@@ -548,6 +607,162 @@ def get_session_detail(session_id: int) -> dict:
                 for s in sets
             ],
         }
+    finally:
+        conn.close()
+
+
+# Delete tools
+
+@mcp.tool()
+def delete_set(set_id: int) -> dict:
+    """
+    Delete a single set by set_id. Renumbers remaining sets for that exercise within the session.
+    Use get_session_detail or get_recent_sessions to find set_ids.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT session_id, exercise_id FROM sets WHERE id = %s", (set_id,))
+        row = cur.fetchone()
+        if not row:
+            return {"error": f"Set {set_id} not found."}
+        session_id, exercise_id = row
+        cur.execute("DELETE FROM sets WHERE id = %s", (set_id,))
+        cur.execute(
+            "SELECT id FROM sets WHERE session_id = %s AND exercise_id = %s ORDER BY set_number",
+            (session_id, exercise_id),
+        )
+        for i, (sid,) in enumerate(cur.fetchall(), start=1):
+            cur.execute("UPDATE sets SET set_number = %s WHERE id = %s", (i, sid))
+        conn.commit()
+        return {"deleted_set_id": set_id}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def delete_session(session_id: int) -> dict:
+    """
+    Delete a session and all its sets. This is irreversible.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT session_date FROM sessions WHERE id = %s", (session_id,))
+        row = cur.fetchone()
+        if not row:
+            return {"error": f"Session {session_id} not found."}
+        cur.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
+        conn.commit()
+        return {"deleted_session_id": session_id, "session_date": str(row[0])}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def delete_exercise(exercise: str) -> dict:
+    """
+    Delete an exercise and all sets ever logged for it across all sessions.
+    Use search_exercises first to confirm the exact name. This is irreversible.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, name FROM exercises WHERE LOWER(name) = LOWER(%s)", (exercise,))
+        row = cur.fetchone()
+        if not row:
+            return {"error": f"Exercise '{exercise}' not found."}
+        exercise_id, canonical_name = row
+        cur.execute("SELECT COUNT(*) FROM sets WHERE exercise_id = %s", (exercise_id,))
+        set_count = cur.fetchone()[0]
+        cur.execute("DELETE FROM sets WHERE exercise_id = %s", (exercise_id,))
+        cur.execute("DELETE FROM exercises WHERE id = %s", (exercise_id,))
+        conn.commit()
+        return {"deleted_exercise": canonical_name, "sets_removed": set_count}
+    finally:
+        conn.close()
+
+
+# Edit tools
+
+@mcp.tool()
+def update_set(
+    set_id: int,
+    weight_kg: Optional[float] = None,
+    reps: Optional[int] = None,
+    notes: Optional[str] = None,
+) -> dict:
+    """
+    Update weight, reps, or notes on an existing set. Only provided fields are changed.
+    Returns the updated set.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT weight_kg, reps, notes FROM sets WHERE id = %s", (set_id,))
+        row = cur.fetchone()
+        if not row:
+            return {"error": f"Set {set_id} not found."}
+        new_weight = weight_kg if weight_kg is not None else float(row[0])
+        new_reps   = reps      if reps      is not None else row[1]
+        new_notes  = notes     if notes     is not None else row[2]
+        cur.execute(
+            "UPDATE sets SET weight_kg = %s, reps = %s, notes = %s WHERE id = %s",
+            (new_weight, new_reps, new_notes, set_id),
+        )
+        conn.commit()
+        e1rm = new_weight if new_reps == 1 else round(new_weight * (1 + new_reps / 30.0), 1)
+        return {"set_id": set_id, "weight_kg": new_weight, "reps": new_reps, "notes": new_notes, "e1rm_kg": e1rm}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def update_session(
+    session_id: int,
+    notes: Optional[str] = None,
+    session_date: Optional[str] = None,
+) -> dict:
+    """
+    Update the notes or date of an existing session. Only provided fields are changed.
+    session_date is ISO 8601 "YYYY-MM-DD".
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT session_date, notes FROM sessions WHERE id = %s", (session_id,))
+        row = cur.fetchone()
+        if not row:
+            return {"error": f"Session {session_id} not found."}
+        new_date  = session_date if session_date is not None else str(row[0])
+        new_notes = notes        if notes        is not None else row[1]
+        cur.execute(
+            "UPDATE sessions SET session_date = %s, notes = %s WHERE id = %s",
+            (new_date, new_notes, session_id),
+        )
+        conn.commit()
+        return {"session_id": session_id, "session_date": new_date, "notes": new_notes}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def rename_exercise(exercise: str, new_name: str) -> dict:
+    """
+    Rename an exercise. All historical sets remain associated under the new name.
+    exercise is matched case-insensitively.
+    """
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, name FROM exercises WHERE LOWER(name) = LOWER(%s)", (exercise,))
+        row = cur.fetchone()
+        if not row:
+            return {"error": f"Exercise '{exercise}' not found."}
+        exercise_id, old_name = row
+        cur.execute("UPDATE exercises SET name = %s WHERE id = %s", (new_name, exercise_id))
+        conn.commit()
+        return {"renamed": old_name, "to": new_name}
     finally:
         conn.close()
 
