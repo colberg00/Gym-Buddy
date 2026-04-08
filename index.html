@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Gym Buddy">
@@ -10,13 +10,13 @@
   <title>Gym Buddy</title>
   <style>
     :root {
-      --bg: #141414;
-      --surface: #1e1e1e;
-      --border: #2e2e2e;
-      --text: #f0f0f0;
-      --muted: #888;
-      --accent: #4ade80;
-      --danger: #f87171;
+      --bg: #1a1a2e;
+      --surface: #252540;
+      --border: #3a3a5c;
+      --text: #e8e8f0;
+      --muted: #8888aa;
+      --accent: #60a5fa;
+      --danger: #e87272;
       --radius: 12px;
     }
 
@@ -87,10 +87,11 @@
       white-space: nowrap;
     }
     .btn:active { opacity: 0.65; }
+    .btn:disabled { opacity: 0.3; pointer-events: none; }
 
     .btn-primary {
       background: var(--accent);
-      color: #000;
+      color: #fff;
     }
 
     .btn-ghost {
@@ -182,11 +183,19 @@
 
     .set-row {
       display: grid;
-      grid-template-columns: 22px 90px 1fr 36px;
+      grid-template-columns: 22px 32px 90px 1fr 36px;
       align-items: center;
       gap: 8px;
       padding: 7px 0;
       border-top: 1px solid var(--border);
+    }
+    .set-row.is-done .weight-input,
+    .set-row.is-done .reps-slider {
+      opacity: 0.35;
+      pointer-events: none;
+    }
+    .set-row.is-done .reps-value {
+      opacity: 0.5;
     }
 
     .set-num {
@@ -201,7 +210,7 @@
       border: 1px solid var(--border);
       border-radius: 6px;
       color: var(--text);
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 500;
       padding: 8px 10px;
       width: 100%;
@@ -243,7 +252,7 @@
       border-radius: 50%;
       background: var(--accent);
       cursor: pointer;
-      box-shadow: 0 0 0 2px rgba(74,222,128,0.2);
+      box-shadow: 0 0 0 2px rgba(96,165,250,0.2);
     }
     .reps-slider::-moz-range-thumb {
       width: 24px;
@@ -332,7 +341,7 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       color: var(--text);
-      font-size: 13px;
+      font-size: 16px;
       font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
       padding: 10px 12px;
       resize: vertical;
@@ -353,10 +362,80 @@
       margin-bottom: 10px;
       line-height: 1.5;
     }
-    .btn-confirm-primary { background: var(--accent); color: #000; border: none; }
+    .btn-confirm-primary { background: var(--accent); color: #fff; border: none; }
+
+    /* ── Done button ─────────────────────────────────────────────────────── */
+    .btn-done {
+      background: transparent;
+      border: 2px solid var(--border);
+      color: var(--muted);
+      font-size: 14px;
+      cursor: pointer;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      flex-shrink: 0;
+      padding: 0;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-done.is-done {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* ── Card navigation ─────────────────────────────────────────────────── */
+    .card-nav {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 16px;
+    }
+    .card-nav-counter {
+      font-size: 14px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      min-width: 48px;
+      text-align: center;
+    }
+    .card-nav .btn {
+      min-width: 90px;
+    }
+
+    /* ── Landscape lock overlay ──────────────────────────────────────────── */
+    .landscape-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 9999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      color: var(--text);
+    }
+    .landscape-overlay .icon { font-size: 48px; }
+    .landscape-overlay p {
+      font-size: 17px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    @media (orientation: landscape) and (max-height: 500px) {
+      .landscape-overlay { display: flex; }
+    }
   </style>
 </head>
 <body>
+
+<div class="landscape-overlay">
+  <div class="icon">🔄</div>
+  <p>Please rotate your phone to portrait</p>
+</div>
 
 <header class="header">
   <div class="header-left">
@@ -397,21 +476,31 @@ function escHtml(str) {
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let exercises = [];
+let currentIndex = 0;
 let pendingAction = null;  // { type: 'deleteExercise'|'newWorkout', id? }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 function save() {
   localStorage.setItem('gymbuddy_session', JSON.stringify(exercises));
+  localStorage.setItem('gymbuddy_index', currentIndex);
 }
 
 function load() {
   try {
     const raw = localStorage.getItem('gymbuddy_session');
     if (raw) exercises = JSON.parse(raw);
+    // Backward compat: default missing done field
+    for (const ex of exercises) {
+      for (const s of ex.sets) {
+        if (s.done === undefined) s.done = false;
+      }
+    }
   } catch (e) {
     exercises = [];
   }
+  currentIndex = parseInt(localStorage.getItem('gymbuddy_index'), 10) || 0;
+  currentIndex = Math.max(0, Math.min(currentIndex, exercises.length - 1));
 }
 
 // ── Mutations ─────────────────────────────────────────────────────────────────
@@ -420,13 +509,14 @@ function addExercise() {
   exercises.push({
     id: uid(),
     name: '',
-    sets: [{ id: uid(), weight: '', reps: 8 }]
+    sets: [{ id: uid(), weight: '', reps: 8, done: false }]
   });
+  currentIndex = exercises.length - 1;
   save();
   render();
   setTimeout(() => {
-    const inputs = document.querySelectorAll('.exercise-name-input');
-    if (inputs.length) inputs[inputs.length - 1].focus();
+    const input = document.querySelector('.exercise-name-input');
+    if (input) input.focus();
   }, 50);
 }
 
@@ -434,7 +524,7 @@ function addSet(exerciseId) {
   const ex = exercises.find(e => e.id === exerciseId);
   if (!ex) return;
   const last = ex.sets[ex.sets.length - 1];
-  ex.sets.push({ id: uid(), weight: last ? last.weight : '', reps: last ? last.reps : 8 });
+  ex.sets.push({ id: uid(), weight: last ? last.weight : '', reps: last ? last.reps : 8, done: false });
   save();
   render();
 }
@@ -455,17 +545,54 @@ function updateName(exerciseId, value) {
 function updateWeight(exerciseId, setId, value) {
   const ex = exercises.find(e => e.id === exerciseId);
   const s = ex && ex.sets.find(s => s.id === setId);
-  if (s) { s.weight = value; save(); }
+  if (!s || s.done) return;
+  s.weight = value; save();
 }
 
 function updateReps(exerciseId, setId, value) {
   const ex = exercises.find(e => e.id === exerciseId);
   const s = ex && ex.sets.find(s => s.id === setId);
-  if (!s) return;
+  if (!s || s.done) return;
   s.reps = parseInt(value, 10);
   save();
   const label = document.getElementById('rv-' + setId);
   if (label) label.textContent = s.reps + ' reps';
+}
+
+function toggleDone(exerciseId, setId) {
+  const ex = exercises.find(e => e.id === exerciseId);
+  const s = ex && ex.sets.find(s => s.id === setId);
+  if (s) { s.done = !s.done; save(); render(); }
+}
+
+// ── Card navigation ──────────────────────────────────────────────────────────
+
+function prevExercise() {
+  if (currentIndex > 0) { currentIndex--; save(); render(); }
+}
+
+function nextExercise() {
+  if (currentIndex < exercises.length - 1) { currentIndex++; save(); render(); }
+}
+
+// ── Reorder exercises ────────────────────────────────────────────────────────
+
+function moveExerciseBefore() {
+  if (currentIndex <= 0) return;
+  [exercises[currentIndex - 1], exercises[currentIndex]] =
+    [exercises[currentIndex], exercises[currentIndex - 1]];
+  currentIndex--;
+  save();
+  render();
+}
+
+function moveExerciseAfter() {
+  if (currentIndex >= exercises.length - 1) return;
+  [exercises[currentIndex], exercises[currentIndex + 1]] =
+    [exercises[currentIndex + 1], exercises[currentIndex]];
+  currentIndex++;
+  save();
+  render();
 }
 
 // ── Confirm actions ───────────────────────────────────────────────────────────
@@ -490,8 +617,10 @@ function confirmAction() {
   if (!pendingAction) return;
   if (pendingAction.type === 'deleteExercise') {
     exercises = exercises.filter(e => e.id !== pendingAction.id);
+    currentIndex = Math.min(currentIndex, Math.max(0, exercises.length - 1));
   } else if (pendingAction.type === 'newWorkout') {
     exercises = [];
+    currentIndex = 0;
   }
   pendingAction = null;
   save();
@@ -500,28 +629,59 @@ function confirmAction() {
 }
 
 // ── Import ────────────────────────────────────────────────────────────────────
-//
-// TODO (MCP connector): Implement an "export_to_frontend" tool in the MCP server
-// that generates the JSON payload below. Claude calls this tool to hand off a
-// structured workout plan to the frontend. The user pastes it here via Import.
-//
-// Future: a local WebSocket/SSE bridge could let the MCP tool push directly to
-// localStorage so the page auto-updates without a manual paste step.
-//
-// Import JSON schema (what Claude should output):
-// {
-//   "exercises": [
-//     {
-//       "name": "Bench Press",          // string — exercise name
-//       "sets": [
-//         { "weight": 100, "reps": 8 }, // weight: number or "" for blank; reps: 3–16
-//         { "weight": 105, "reps": 6 }
-//       ]
-//     }
-//   ]
-// }
 
-function openImport() {
+function tryParseImport(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    return { success: false, error: 'Invalid JSON — check the format and try again.' };
+  }
+  if (!parsed || !Array.isArray(parsed.exercises)) {
+    return { success: false, error: 'Expected { "exercises": [...] } at the top level.' };
+  }
+  const imported = [];
+  for (const ex of parsed.exercises) {
+    if (typeof ex.name !== 'string') {
+      return { success: false, error: 'Each exercise must have a "name" string.' };
+    }
+    if (!Array.isArray(ex.sets) || ex.sets.length === 0) {
+      return { success: false, error: `"${ex.name}" must have at least one set.` };
+    }
+    const sets = [];
+    for (const s of ex.sets) {
+      const reps = Math.min(16, Math.max(3, parseInt(s.reps, 10) || 8));
+      sets.push({ id: uid(), weight: s.weight !== undefined ? String(s.weight) : '', reps, done: false });
+    }
+    imported.push({ id: uid(), name: ex.name, sets });
+  }
+  return { success: true, exercises: imported };
+}
+
+async function openImport() {
+  // Try clipboard-first
+  try {
+    const text = await navigator.clipboard.readText();
+    const trimmed = (text || '').trim();
+    if (trimmed) {
+      const result = tryParseImport(trimmed);
+      if (result.success) {
+        exercises = result.exercises;
+        currentIndex = 0;
+        save();
+        render();
+        showToast(`Imported ${result.exercises.length} exercise${result.exercises.length !== 1 ? 's' : ''}!`);
+        return;
+      }
+    }
+  } catch (e) {
+    // Clipboard API denied or unavailable
+  }
+  // Fall back to manual paste modal
+  openImportModal();
+}
+
+function openImportModal() {
   removeModal();
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -529,7 +689,7 @@ function openImport() {
   overlay.innerHTML = `
     <div class="modal">
       <h3>Import from Claude</h3>
-      <p class="import-hint">Ask Claude to export a workout as JSON, then paste it below. It will replace your current exercises.</p>
+      <p class="import-hint">Paste workout JSON below. It will replace your current exercises.</p>
       <textarea
         class="import-textarea"
         id="import-input"
@@ -553,43 +713,17 @@ function confirmImport() {
   const raw = (document.getElementById('import-input').value || '').trim();
   const errEl = document.getElementById('import-error');
   errEl.textContent = '';
-
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    errEl.textContent = 'Invalid JSON — check the format and try again.';
+  const result = tryParseImport(raw);
+  if (!result.success) {
+    errEl.textContent = result.error;
     return;
   }
-
-  if (!parsed || !Array.isArray(parsed.exercises)) {
-    errEl.textContent = 'Expected { "exercises": [...] } at the top level.';
-    return;
-  }
-
-  const imported = [];
-  for (const ex of parsed.exercises) {
-    if (typeof ex.name !== 'string') {
-      errEl.textContent = 'Each exercise must have a "name" string.';
-      return;
-    }
-    if (!Array.isArray(ex.sets) || ex.sets.length === 0) {
-      errEl.textContent = `"${ex.name}" must have at least one set.`;
-      return;
-    }
-    const sets = [];
-    for (const s of ex.sets) {
-      const reps = Math.min(16, Math.max(3, parseInt(s.reps, 10) || 8));
-      sets.push({ id: uid(), weight: s.weight !== undefined ? String(s.weight) : '', reps });
-    }
-    imported.push({ id: uid(), name: ex.name, sets });
-  }
-
-  exercises = imported;
+  exercises = result.exercises;
+  currentIndex = 0;
   save();
   hideModal();
   render();
-  showToast(`Imported ${imported.length} exercise${imported.length !== 1 ? 's' : ''}!`);
+  showToast(`Imported ${result.exercises.length} exercise${result.exercises.length !== 1 ? 's' : ''}!`);
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -606,7 +740,10 @@ function render() {
     return;
   }
 
-  container.innerHTML = exercises.map(ex => `
+  currentIndex = Math.max(0, Math.min(currentIndex, exercises.length - 1));
+  const ex = exercises[currentIndex];
+
+  container.innerHTML = `
     <div class="exercise-card">
       <div class="exercise-header">
         <input
@@ -620,11 +757,18 @@ function render() {
           autocapitalize="words"
           spellcheck="false"
         />
+        <button class="btn-icon" onclick="moveExerciseBefore()"
+          ${currentIndex <= 0 ? 'disabled' : ''} aria-label="Move before">↑</button>
+        <button class="btn-icon" onclick="moveExerciseAfter()"
+          ${currentIndex >= exercises.length - 1 ? 'disabled' : ''} aria-label="Move after">↓</button>
       </div>
       <div class="sets-table">
         ${ex.sets.map((s, i) => `
-          <div class="set-row">
+          <div class="set-row ${s.done ? 'is-done' : ''}">
             <span class="set-num">${i + 1}</span>
+            <button class="btn-done ${s.done ? 'is-done' : ''}"
+              onclick="toggleDone('${ex.id}', '${s.id}')"
+              aria-label="Mark set done">${s.done ? '✓' : ''}</button>
             <input
               class="weight-input"
               type="number"
@@ -657,7 +801,13 @@ function render() {
         <button class="btn btn-danger-ghost btn-sm" onclick="deleteExercise('${ex.id}')">Delete</button>
       </div>
     </div>
-  `).join('');
+    <div class="card-nav">
+      <button class="btn btn-ghost btn-sm" onclick="prevExercise()"
+        ${currentIndex <= 0 ? 'disabled' : ''}>◀ Prev</button>
+      <span class="card-nav-counter">${currentIndex + 1} / ${exercises.length}</span>
+      <button class="btn btn-ghost btn-sm" onclick="nextExercise()"
+        ${currentIndex >= exercises.length - 1 ? 'disabled' : ''}>Next ▶</button>
+    </div>`;
 }
 
 // ── Format / Clipboard ────────────────────────────────────────────────────────
@@ -671,7 +821,8 @@ function formatWorkout() {
     lines.push(ex.name || '(unnamed)');
     ex.sets.forEach((s, i) => {
       const w = s.weight !== '' ? `${s.weight} kg` : '— kg';
-      lines.push(`  Set ${i + 1}: ${w} × ${s.reps} reps`);
+      const check = s.done ? ' ✓' : '';
+      lines.push(`  Set ${i + 1}: ${w} × ${s.reps} reps${check}`);
     });
     lines.push('');
   }
@@ -753,9 +904,9 @@ function removeModal() {
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#141414';
+    ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = '#4ade80';
+    ctx.fillStyle = '#60a5fa';
     ctx.font = `bold ${size * 0.4}px -apple-system, system-ui, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
