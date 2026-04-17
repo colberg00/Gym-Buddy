@@ -101,7 +101,7 @@ def start_session(
 def end_session(session_id: int, notes: Optional[str] = None) -> dict:
     """
     Finalise a workout session. Optionally append closing notes.
-    Returns a summary: exercises hit, total sets, and total volume (kg * reps).
+    Returns a summary: exercises hit, total sets, and total volume (weight * reps).
     """
     conn = get_db()
     try:
@@ -116,7 +116,7 @@ def end_session(session_id: int, notes: Optional[str] = None) -> dict:
             SELECT
                 COUNT(DISTINCT s.exercise_id) AS exercises,
                 COUNT(*) AS total_sets,
-                COALESCE(SUM(s.weight_kg * s.reps), 0) AS total_volume_kg
+                COALESCE(SUM(s.weight * s.reps), 0) AS total_volume
             FROM sets s
             WHERE s.session_id = %s
             """,
@@ -128,7 +128,7 @@ def end_session(session_id: int, notes: Optional[str] = None) -> dict:
             "session_id": session_id,
             "exercises": row[0],
             "total_sets": row[1],
-            "total_volume_kg": float(row[2]),
+            "total_volume": float(row[2]),
         }
     finally:
         conn.close()
@@ -140,7 +140,7 @@ def end_session(session_id: int, notes: Optional[str] = None) -> dict:
 def log_set(
     session_id: int,
     exercise: str,
-    weight_kg: float,
+    weight: float,
     reps: int,
     notes: Optional[str] = None,
 ) -> dict:
@@ -161,21 +161,21 @@ def log_set(
         set_number = cur.fetchone()[0] + 1
 
         cur.execute(
-            "INSERT INTO sets (session_id, exercise_id, set_number, weight_kg, reps, notes) "
+            "INSERT INTO sets (session_id, exercise_id, set_number, weight, reps, notes) "
             "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-            (session_id, exercise_id, set_number, weight_kg, reps, notes),
+            (session_id, exercise_id, set_number, weight, reps, notes),
         )
         set_id = cur.fetchone()[0]
         conn.commit()
 
-        e1rm = weight_kg if reps == 1 else round(weight_kg * (1 + reps / 30.0), 1)
+        e1rm = weight if reps == 1 else round(weight * (1 + reps / 30.0), 1)
         return {
             "set_id": set_id,
             "exercise": canonical_name,
             "set_number": set_number,
-            "weight_kg": weight_kg,
+            "weight": weight,
             "reps": reps,
-            "e1rm_kg": e1rm,
+            "e1rm": e1rm,
         }
     finally:
         conn.close()
@@ -183,7 +183,7 @@ def log_set(
 
 @mcp.tool()
 def log_bodyweight(
-    weight_kg: float,
+    weight: float,
     measured_at: Optional[str] = None,
 ) -> dict:
     """
@@ -195,17 +195,17 @@ def log_bodyweight(
         cur = conn.cursor()
         if measured_at:
             cur.execute(
-                "INSERT INTO bodyweight (weight_kg, measured_at) VALUES (%s, %s) RETURNING id",
-                (weight_kg, measured_at),
+                "INSERT INTO bodyweight (weight, measured_at) VALUES (%s, %s) RETURNING id",
+                (weight, measured_at),
             )
         else:
             cur.execute(
-                "INSERT INTO bodyweight (weight_kg) VALUES (%s) RETURNING id",
-                (weight_kg,),
+                "INSERT INTO bodyweight (weight) VALUES (%s) RETURNING id",
+                (weight,),
             )
         entry_id = cur.fetchone()[0]
         conn.commit()
-        return {"id": entry_id, "weight_kg": weight_kg}
+        return {"id": entry_id, "weight": weight}
     finally:
         conn.close()
 
@@ -220,7 +220,7 @@ def log_workout(
     Log a complete workout in one call — creates the session, logs all exercises and sets,
     and returns a summary.
     exercises must be a list of objects:
-      [{"name": "Bench Press", "sets": [{"weight_kg": 100, "reps": 8}, ...]}, ...]
+      [{"name": "Bench Press", "sets": [{"weight": 100, "reps": 8}, ...]}, ...]
     Each set may also include an optional "notes" field.
     session_date is ISO 8601 "YYYY-MM-DD"; defaults to today if omitted.
     """
@@ -246,14 +246,14 @@ def log_workout(
         for ex_data in exercises:
             exercise_id, canonical_name = resolve_exercise(cur, ex_data["name"])
             for i, s in enumerate(ex_data["sets"], start=1):
-                weight_kg = float(s["weight_kg"])
+                w = float(s["weight"])
                 reps = int(s["reps"])
                 cur.execute(
-                    "INSERT INTO sets (session_id, exercise_id, set_number, weight_kg, reps, notes) "
+                    "INSERT INTO sets (session_id, exercise_id, set_number, weight, reps, notes) "
                     "VALUES (%s, %s, %s, %s, %s, %s)",
-                    (session_id, exercise_id, i, weight_kg, reps, s.get("notes")),
+                    (session_id, exercise_id, i, w, reps, s.get("notes")),
                 )
-                total_volume += weight_kg * reps
+                total_volume += w * reps
                 total_sets += 1
             logged_exercises.append({"exercise": canonical_name, "sets": len(ex_data["sets"])})
 
@@ -263,7 +263,7 @@ def log_workout(
             "session_date": session_date or "today",
             "exercises": logged_exercises,
             "total_sets": total_sets,
-            "total_volume_kg": round(total_volume, 1),
+            "total_volume": round(total_volume, 1),
         }
     finally:
         conn.close()
@@ -304,7 +304,7 @@ def get_recent_sessions(
         for sess in sessions:
             cur.execute(
                 """
-                SELECT exercise, set_number, weight_kg, reps, e1rm_kg, set_notes
+                SELECT exercise, set_number, weight, reps, e1rm, set_notes
                 FROM set_history
                 WHERE session_id = %s
                 ORDER BY exercise, set_number
@@ -320,9 +320,9 @@ def get_recent_sessions(
                     {
                         "exercise": s["exercise"],
                         "set_number": s["set_number"],
-                        "weight_kg": float(s["weight_kg"]),
+                        "weight": float(s["weight"]),
                         "reps": s["reps"],
-                        "e1rm_kg": float(s["e1rm_kg"]),
+                        "e1rm": float(s["e1rm"]),
                         "notes": s["set_notes"],
                     }
                     for s in sets
@@ -362,7 +362,7 @@ def get_exercise_history(
         canonical_name = row[1]
 
         query = """
-            SELECT session_date, set_number, weight_kg, reps, e1rm_kg, set_notes
+            SELECT session_date, set_number, weight, reps, e1rm, set_notes
             FROM set_history
             WHERE exercise = %s AND session_date >= CURRENT_DATE - %s
             ORDER BY session_date, set_number
@@ -379,9 +379,9 @@ def get_exercise_history(
         for r in rows:
             by_date[str(r["session_date"])].append({
                 "set_number": r["set_number"],
-                "weight_kg": float(r["weight_kg"]),
+                "weight": float(r["weight"]),
                 "reps": r["reps"],
-                "e1rm_kg": float(r["e1rm_kg"]),
+                "e1rm": float(r["e1rm"]),
                 "notes": r["set_notes"],
             })
 
@@ -400,7 +400,7 @@ def get_prs(
 ) -> list:
     """
     Return personal records.
-    pr_type: 'e1rm' (estimated 1RM), 'weight' (heaviest lift), 'volume_session' (most kg*reps in one session).
+    pr_type: 'e1rm' (estimated 1RM), 'weight' (heaviest lift), 'volume_session' (most weight*reps in one session).
     Omit exercise to get the top PR for every logged exercise.
     """
     conn = get_db()
@@ -410,32 +410,32 @@ def get_prs(
         if pr_type == "e1rm":
             if exercise:
                 cur.execute(
-                    "SELECT exercise, session_date, weight_kg, reps, e1rm_kg FROM set_history WHERE LOWER(exercise) = LOWER(%s) ORDER BY e1rm_kg DESC LIMIT 1",
+                    "SELECT exercise, session_date, weight, reps, e1rm FROM set_history WHERE LOWER(exercise) = LOWER(%s) ORDER BY e1rm DESC LIMIT 1",
                     (exercise,),
                 )
             else:
                 cur.execute(
-                    "SELECT DISTINCT ON (exercise) exercise, session_date, weight_kg, reps, e1rm_kg FROM set_history ORDER BY exercise, e1rm_kg DESC"
+                    "SELECT DISTINCT ON (exercise) exercise, session_date, weight, reps, e1rm FROM set_history ORDER BY exercise, e1rm DESC"
                 )
         elif pr_type == "weight":
             if exercise:
                 cur.execute(
-                    "SELECT exercise, session_date, weight_kg, reps, e1rm_kg FROM set_history WHERE LOWER(exercise) = LOWER(%s) ORDER BY weight_kg DESC LIMIT 1",
+                    "SELECT exercise, session_date, weight, reps, e1rm FROM set_history WHERE LOWER(exercise) = LOWER(%s) ORDER BY weight DESC LIMIT 1",
                     (exercise,),
                 )
             else:
                 cur.execute(
-                    "SELECT DISTINCT ON (exercise) exercise, session_date, weight_kg, reps, e1rm_kg FROM set_history ORDER BY exercise, weight_kg DESC"
+                    "SELECT DISTINCT ON (exercise) exercise, session_date, weight, reps, e1rm FROM set_history ORDER BY exercise, weight DESC"
                 )
         elif pr_type == "volume_session":
             if exercise:
                 cur.execute(
-                    "SELECT exercise, session_date, SUM(weight_kg * reps) AS total_volume FROM set_history WHERE LOWER(exercise) = LOWER(%s) GROUP BY exercise, session_date ORDER BY total_volume DESC LIMIT 1",
+                    "SELECT exercise, session_date, SUM(weight * reps) AS total_volume FROM set_history WHERE LOWER(exercise) = LOWER(%s) GROUP BY exercise, session_date ORDER BY total_volume DESC LIMIT 1",
                     (exercise,),
                 )
             else:
                 cur.execute(
-                    "SELECT DISTINCT ON (exercise) exercise, session_date, SUM(weight_kg * reps) OVER (PARTITION BY exercise, session_date) AS total_volume FROM set_history ORDER BY exercise, total_volume DESC"
+                    "SELECT DISTINCT ON (exercise) exercise, session_date, SUM(weight * reps) OVER (PARTITION BY exercise, session_date) AS total_volume FROM set_history ORDER BY exercise, total_volume DESC"
                 )
         else:
             return [{"error": f"Unknown pr_type '{pr_type}'. Use 'e1rm', 'weight', or 'volume_session'."}]
@@ -452,7 +452,7 @@ def get_volume_over_time(
     group_by: str = "week",
 ) -> list:
     """
-    Return training volume (kg * reps) grouped by time period ('day', 'week', 'month').
+    Return training volume (weight * reps) grouped by time period ('day', 'week', 'month').
     Omit exercise to aggregate across all exercises.
     """
     conn = get_db()
@@ -464,7 +464,7 @@ def get_volume_over_time(
             cur.execute(
                 f"""
                 SELECT DATE_TRUNC('{trunc}', session_date::timestamp)::date AS period,
-                       SUM(weight_kg * reps) AS volume_kg
+                       SUM(weight * reps) AS volume
                 FROM set_history
                 WHERE LOWER(exercise) = LOWER(%s) AND session_date >= CURRENT_DATE - %s
                 GROUP BY period ORDER BY period
@@ -475,14 +475,14 @@ def get_volume_over_time(
             cur.execute(
                 f"""
                 SELECT DATE_TRUNC('{trunc}', session_date::timestamp)::date AS period,
-                       SUM(weight_kg * reps) AS volume_kg
+                       SUM(weight * reps) AS volume
                 FROM set_history
                 WHERE session_date >= CURRENT_DATE - %s
                 GROUP BY period ORDER BY period
                 """,
                 (days,),
             )
-        return [{"period": str(r["period"]), "volume_kg": float(r["volume_kg"])} for r in cur.fetchall()]
+        return [{"period": str(r["period"]), "volume": float(r["volume"])} for r in cur.fetchall()]
     finally:
         conn.close()
 
@@ -496,10 +496,10 @@ def get_bodyweight_history(days: int = 90) -> list:
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT measured_at::date AS date, weight_kg FROM bodyweight WHERE measured_at >= NOW() - INTERVAL '%s days' ORDER BY measured_at",
+            "SELECT measured_at::date AS date, weight FROM bodyweight WHERE measured_at >= NOW() - INTERVAL '%s days' ORDER BY measured_at",
             (days,),
         )
-        return [{"date": str(r[0]), "weight_kg": float(r[1])} for r in cur.fetchall()]
+        return [{"date": str(r[0]), "weight": float(r[1])} for r in cur.fetchall()]
     finally:
         conn.close()
 
@@ -549,7 +549,7 @@ def list_exercises(orderby: str = "frequency") -> list:
         cur.execute(
             f"""
             SELECT e.name, COUNT(s.id) AS total_sets, MAX(sess.session_date) AS last_trained,
-                   MAX(CASE WHEN s.reps = 1 THEN s.weight_kg ELSE s.weight_kg * (1 + s.reps / 30.0) END) AS best_e1rm
+                   MAX(CASE WHEN s.reps = 1 THEN s.weight ELSE s.weight * (1 + s.reps / 30.0) END) AS best_e1rm
             FROM exercises e
             LEFT JOIN sets s ON s.exercise_id = e.id
             LEFT JOIN sessions sess ON sess.id = s.session_id
@@ -561,7 +561,7 @@ def list_exercises(orderby: str = "frequency") -> list:
                 "exercise": r[0],
                 "total_sets": r[1],
                 "last_trained": str(r[2]) if r[2] else None,
-                "best_e1rm_kg": round(float(r[3]), 1) if r[3] else None,
+                "best_e1rm": round(float(r[3]), 1) if r[3] else None,
             }
             for r in cur.fetchall()
         ]
@@ -583,25 +583,25 @@ def get_session_detail(session_id: int) -> dict:
             return {"error": f"Session {session_id} not found."}
 
         cur.execute(
-            "SELECT exercise, set_number, weight_kg, reps, e1rm_kg, set_notes FROM set_history WHERE session_id = %s ORDER BY exercise, set_number",
+            "SELECT exercise, set_number, weight, reps, e1rm, set_notes FROM set_history WHERE session_id = %s ORDER BY exercise, set_number",
             (session_id,),
         )
         sets = cur.fetchall()
-        total_volume = sum(float(s["weight_kg"]) * s["reps"] for s in sets)
+        total_volume = sum(float(s["weight"]) * s["reps"] for s in sets)
 
         return {
             "session_id": sess["id"],
             "session_date": str(sess["session_date"]),
             "notes": sess["notes"],
             "total_sets": len(sets),
-            "total_volume_kg": round(total_volume, 1),
+            "total_volume": round(total_volume, 1),
             "sets": [
                 {
                     "exercise": s["exercise"],
                     "set_number": s["set_number"],
-                    "weight_kg": float(s["weight_kg"]),
+                    "weight": float(s["weight"]),
                     "reps": s["reps"],
-                    "e1rm_kg": float(s["e1rm_kg"]),
+                    "e1rm": float(s["e1rm"]),
                     "notes": s["set_notes"],
                 }
                 for s in sets
@@ -688,7 +688,7 @@ def delete_exercise(exercise: str) -> dict:
 @mcp.tool()
 def update_set(
     set_id: int,
-    weight_kg: Optional[float] = None,
+    weight: Optional[float] = None,
     reps: Optional[int] = None,
     notes: Optional[str] = None,
 ) -> dict:
@@ -699,20 +699,20 @@ def update_set(
     conn = get_db()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT weight_kg, reps, notes FROM sets WHERE id = %s", (set_id,))
+        cur.execute("SELECT weight, reps, notes FROM sets WHERE id = %s", (set_id,))
         row = cur.fetchone()
         if not row:
             return {"error": f"Set {set_id} not found."}
-        new_weight = weight_kg if weight_kg is not None else float(row[0])
-        new_reps   = reps      if reps      is not None else row[1]
-        new_notes  = notes     if notes     is not None else row[2]
+        new_weight = weight if weight is not None else float(row[0])
+        new_reps   = reps   if reps   is not None else row[1]
+        new_notes  = notes  if notes  is not None else row[2]
         cur.execute(
-            "UPDATE sets SET weight_kg = %s, reps = %s, notes = %s WHERE id = %s",
+            "UPDATE sets SET weight = %s, reps = %s, notes = %s WHERE id = %s",
             (new_weight, new_reps, new_notes, set_id),
         )
         conn.commit()
         e1rm = new_weight if new_reps == 1 else round(new_weight * (1 + new_reps / 30.0), 1)
-        return {"set_id": set_id, "weight_kg": new_weight, "reps": new_reps, "notes": new_notes, "e1rm_kg": e1rm}
+        return {"set_id": set_id, "weight": new_weight, "reps": new_reps, "notes": new_notes, "e1rm": e1rm}
     finally:
         conn.close()
 
@@ -773,7 +773,6 @@ def rename_exercise(exercise: str, new_name: str) -> dict:
 def get_training_philosophy() -> str:
     """
     Return the user's training philosophy document verbatim.
-    Always call this before generating a workout plan.
     """
     try:
         with open(PHILOSOPHY_PATH) as f:
@@ -791,6 +790,153 @@ def update_training_philosophy(content: str) -> dict:
     with open(PHILOSOPHY_PATH, "w") as f:
         f.write(content)
     return {"status": "ok", "bytes_written": len(content)}
+
+
+# ── REST API endpoints (no auth required — access controlled by Tailscale) ────
+
+async def api_get_templates(request: Request) -> JSONResponse:
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT id, name FROM workout_templates ORDER BY sort_order, id")
+        return JSONResponse({"templates": [dict(r) for r in cur.fetchall()]})
+    finally:
+        conn.close()
+
+
+async def api_get_workout(request: Request) -> JSONResponse:
+    try:
+        template_id = int(request.path_params["template_id"])
+    except (KeyError, ValueError):
+        return JSONResponse({"error": "invalid template_id"}, status_code=400)
+
+    conn = get_db()
+    try:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT name FROM workout_templates WHERE id = %s", (template_id,))
+        tmpl = cur.fetchone()
+        if not tmpl:
+            return JSONResponse({"error": "template not found"}, status_code=404)
+
+        cur.execute(
+            """
+            SELECT te.position, te.default_sets, te.target_reps_min, te.target_reps_max,
+                   e.id AS exercise_id, e.name AS exercise_name
+            FROM template_exercises te
+            JOIN exercises e ON e.id = te.exercise_id
+            WHERE te.template_id = %s
+            ORDER BY te.position
+            """,
+            (template_id,),
+        )
+        template_rows = cur.fetchall()
+
+        exercises_out = []
+        for row in template_rows:
+            ex_id = row["exercise_id"]
+            cur.execute(
+                """
+                SELECT s.set_number, s.weight, s.reps
+                FROM sets s
+                JOIN sessions sess ON sess.id = s.session_id
+                WHERE s.exercise_id = %s
+                  AND sess.session_date = (
+                      SELECT MAX(sess2.session_date)
+                      FROM sets s2
+                      JOIN sessions sess2 ON sess2.id = s2.session_id
+                      WHERE s2.exercise_id = %s
+                  )
+                ORDER BY s.set_number
+                """,
+                (ex_id, ex_id),
+            )
+            last_sets = cur.fetchall()
+            exercises_out.append({
+                "exercise_id": ex_id,
+                "exercise_name": row["exercise_name"],
+                "default_sets": row["default_sets"],
+                "target_reps_min": row["target_reps_min"],
+                "target_reps_max": row["target_reps_max"],
+                "last_sets": [
+                    {"set_number": s["set_number"], "weight": float(s["weight"]), "reps": s["reps"]}
+                    for s in last_sets
+                ],
+            })
+
+        return JSONResponse({
+            "template_id": template_id,
+            "template_name": tmpl["name"],
+            "exercises": exercises_out,
+        })
+    finally:
+        conn.close()
+
+
+async def api_save_session(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    exercises_payload = body.get("exercises", [])
+    if not exercises_payload:
+        return JSONResponse({"error": "no exercises provided"}, status_code=400)
+
+    notes = body.get("notes")
+    template_id = body.get("template_id")
+    if template_id:
+        notes = f"[template:{template_id}]{(' ' + notes) if notes else ''}"
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        session_date = body.get("session_date")
+        if session_date:
+            cur.execute(
+                "INSERT INTO sessions (session_date, notes) VALUES (%s, %s) RETURNING id",
+                (session_date, notes),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO sessions (notes) VALUES (%s) RETURNING id",
+                (notes,),
+            )
+        session_id = cur.fetchone()[0]
+
+        total_sets = 0
+        total_volume = 0.0
+        logged = []
+
+        for ex_data in exercises_payload:
+            ex_id = ex_data.get("exercise_id")
+            ex_name = ex_data.get("name", "")
+            if not ex_id:
+                ex_id, ex_name = resolve_exercise(cur, ex_name)
+
+            for i, s in enumerate(ex_data.get("sets", []), start=1):
+                w = float(s.get("weight") or 0)
+                reps = int(s.get("reps") or 0)
+                cur.execute(
+                    "INSERT INTO sets (session_id, exercise_id, set_number, weight, reps) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (session_id, ex_id, i, w, reps),
+                )
+                total_volume += w * reps
+                total_sets += 1
+            logged.append({"exercise": ex_name, "sets": len(ex_data.get("sets", []))})
+
+        conn.commit()
+        return JSONResponse({
+            "session_id": session_id,
+            "total_sets": total_sets,
+            "total_volume": round(total_volume, 1),
+            "exercises": logged,
+        }, status_code=201)
+    except Exception as e:
+        conn.rollback()
+        return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        conn.close()
 
 
 # ── OAuth endpoints ───────────────────────────────────────────────────────────
@@ -929,7 +1075,7 @@ async def oauth_token(request: Request) -> JSONResponse:
     return JSONResponse({
         "access_token": token,
         "token_type": "bearer",
-        "expires_in": 31536000,  # 1 year; Claude re-auths if server restarts
+        "expires_in": 31536000,
     })
 
 
@@ -937,7 +1083,8 @@ async def oauth_token(request: Request) -> JSONResponse:
 
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.url.path in OPEN_PATHS:
+        path = request.url.path
+        if path in OPEN_PATHS or path.startswith("/api/"):
             return await call_next(request)
         auth  = request.headers.get("Authorization", "")
         token = auth.removeprefix("Bearer ").strip()
@@ -950,11 +1097,9 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
 
 # ── Wire up the full app ──────────────────────────────────────────────────────
 
-# Use streamable HTTP transport (what Claude web expects) at "/"
 mcp.settings.streamable_http_path = "/"
 mcp.settings.stateless_http = True
 
-# Allow the Tailscale Funnel hostname (and localhost for local testing)
 _funnel_host = SERVER_URL.removeprefix("https://").removeprefix("http://").split("/")[0]
 from mcp.server.streamable_http import TransportSecuritySettings
 mcp.settings.transport_security = TransportSecuritySettings(
@@ -980,6 +1125,9 @@ app = Starlette(
         Route("/token",           oauth_token,     methods=["POST"]),
         Route("/app",             serve_app),
         Route("/manifest.json",   serve_manifest),
+        Route("/api/templates",              api_get_templates,  methods=["GET"]),
+        Route("/api/workout/{template_id}",  api_get_workout,    methods=["GET"]),
+        Route("/api/sessions",               api_save_session,   methods=["POST"]),
         Mount("/",                app=_mcp_asgi_app),
     ],
     middleware=[Middleware(BearerAuthMiddleware)],

@@ -176,6 +176,14 @@
     }
     .exercise-name-input::placeholder { color: var(--muted); font-weight: 400; }
 
+    /* ── Exercise meta (target reps + last session ref) ──────────────────── */
+    .exercise-meta {
+      font-size: 12px;
+      color: var(--muted);
+      padding: 0 12px 8px;
+      line-height: 1.4;
+    }
+
     /* ── Sets ────────────────────────────────────────────────────────────── */
     .sets-table {
       padding: 0 12px;
@@ -332,37 +340,19 @@
     .modal-actions { display: flex; gap: 10px; }
     .modal-actions .btn { flex: 1; }
     .btn-confirm-danger { background: var(--danger); color: #fff; border: none; }
-
-    /* ── Import sheet ────────────────────────────────────────────────────────── */
-    .import-textarea {
-      width: 100%;
-      min-height: 140px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      font-size: 16px;
-      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
-      padding: 10px 12px;
-      resize: vertical;
-      outline: none;
-      margin-bottom: 8px;
-      line-height: 1.5;
-    }
-    .import-textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-    .import-error {
-      color: var(--danger);
-      font-size: 13px;
-      min-height: 18px;
-      margin-bottom: 12px;
-    }
-    .import-hint {
-      font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 10px;
-      line-height: 1.5;
-    }
     .btn-confirm-primary { background: var(--accent); color: #fff; border: none; }
+
+    /* ── Workout selector buttons ────────────────────────────────────────── */
+    .workout-selector-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .workout-selector-actions .btn {
+      width: 100%;
+      font-size: 17px;
+      padding: 14px;
+    }
 
     /* ── Done button ─────────────────────────────────────────────────────── */
     .btn-done {
@@ -443,8 +433,6 @@
     <div class="date" id="date"></div>
   </div>
   <div class="header-actions">
-    <button class="btn btn-ghost btn-sm" onclick="newWorkout()">New</button>
-    <button class="btn btn-ghost btn-sm" onclick="openImport()">Import</button>
     <button class="btn btn-primary btn-sm" onclick="addExercise()">+ Exercise</button>
   </div>
 </header>
@@ -452,8 +440,8 @@
 <div class="exercises" id="exercises"></div>
 
 <footer class="footer">
-  <button class="btn btn-ghost" onclick="copyToClipboard()">📋 Copy</button>
-  <button class="btn btn-primary" onclick="sendToClaude()">Send to Claude</button>
+  <button class="btn btn-ghost" onclick="newWorkout()">New Workout</button>
+  <button class="btn btn-primary" id="btn-save" onclick="saveWorkout()" disabled>Save Workout</button>
 </footer>
 
 <div class="toast" id="toast"></div>
@@ -477,20 +465,23 @@ function escHtml(str) {
 
 let exercises = [];
 let currentIndex = 0;
-let pendingAction = null;  // { type: 'deleteExercise'|'newWorkout', id? }
+let pendingAction = null;
+let currentTemplateId = null;
+let templates = [];
+let isSaving = false;
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 
 function save() {
   localStorage.setItem('gymbuddy_session', JSON.stringify(exercises));
   localStorage.setItem('gymbuddy_index', currentIndex);
+  localStorage.setItem('gymbuddy_template', currentTemplateId || '');
 }
 
 function load() {
   try {
     const raw = localStorage.getItem('gymbuddy_session');
     if (raw) exercises = JSON.parse(raw);
-    // Backward compat: default missing done field
     for (const ex of exercises) {
       for (const s of ex.sets) {
         if (s.done === undefined) s.done = false;
@@ -501,6 +492,96 @@ function load() {
   }
   currentIndex = parseInt(localStorage.getItem('gymbuddy_index'), 10) || 0;
   currentIndex = Math.max(0, Math.min(currentIndex, exercises.length - 1));
+  currentTemplateId = parseInt(localStorage.getItem('gymbuddy_template'), 10) || null;
+}
+
+// ── Templates ─────────────────────────────────────────────────────────────────
+
+async function loadTemplates() {
+  try {
+    const res = await fetch('/api/templates');
+    if (res.ok) {
+      const data = await res.json();
+      templates = data.templates;
+    }
+  } catch (e) {}
+}
+
+function showWorkoutSelector() {
+  removeModal();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-overlay';
+
+  const buttons = templates.length > 0
+    ? templates.map(t =>
+        `<button class="btn btn-primary" onclick="loadTemplate(${t.id})">${escHtml(t.name)}</button>`
+      ).join('')
+    : `<p style="color:var(--muted);font-size:14px;text-align:center">No templates available — add exercises manually.</p>`;
+
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>Start Workout</h3>
+      <p>Choose a workout to load</p>
+      <div class="workout-selector-actions">
+        ${buttons}
+        <button class="btn btn-ghost" onclick="hideModal()">Cancel</button>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) hideModal(); });
+  document.body.appendChild(overlay);
+}
+
+async function loadTemplate(templateId) {
+  hideModal();
+  try {
+    const res = await fetch(`/api/workout/${templateId}`);
+    if (!res.ok) { showToast('Failed to load workout'); return; }
+    const data = await res.json();
+
+    exercises = data.exercises.map(apiEx => {
+      const lastSets = apiEx.last_sets;
+      const defaultWeight = lastSets.length > 0
+        ? String(lastSets[lastSets.length - 1].weight)
+        : '';
+      const defaultReps = apiEx.target_reps_min;
+
+      let lastRef = null;
+      if (lastSets.length > 0) {
+        const weights = [...new Set(lastSets.map(s => s.weight))];
+        const weightStr = weights.length === 1
+          ? `${weights[0]} kg`
+          : `${Math.min(...weights)}–${Math.max(...weights)} kg`;
+        const avgReps = Math.round(lastSets.reduce((a, s) => a + s.reps, 0) / lastSets.length);
+        lastRef = `${weightStr} × ${avgReps} reps (${lastSets.length} sets)`;
+      }
+
+      const sets = Array.from({ length: apiEx.default_sets }, () => ({
+        id: uid(),
+        weight: defaultWeight,
+        reps: defaultReps,
+        done: false,
+      }));
+
+      return {
+        id: uid(),
+        name: apiEx.exercise_name,
+        exerciseId: apiEx.exercise_id,
+        targetMin: apiEx.target_reps_min,
+        targetMax: apiEx.target_reps_max,
+        lastRef,
+        sets,
+      };
+    });
+
+    currentIndex = 0;
+    currentTemplateId = templateId;
+    save();
+    render();
+    showToast(`${data.template_name} loaded — ${exercises.length} exercises`);
+  } catch (e) {
+    showToast('Failed to load workout');
+  }
 }
 
 // ── Mutations ─────────────────────────────────────────────────────────────────
@@ -608,9 +689,12 @@ function deleteExercise(id) {
 }
 
 function newWorkout() {
-  if (exercises.length === 0) return;
-  pendingAction = { type: 'newWorkout' };
-  showModal('Start new workout?', 'This will clear all current exercises.');
+  if (exercises.length > 0) {
+    pendingAction = { type: 'newWorkoutSelector' };
+    showModal('Start new workout?', 'This will clear all current exercises.');
+  } else {
+    showWorkoutSelector();
+  }
 }
 
 function confirmAction() {
@@ -618,130 +702,112 @@ function confirmAction() {
   if (pendingAction.type === 'deleteExercise') {
     exercises = exercises.filter(e => e.id !== pendingAction.id);
     currentIndex = Math.min(currentIndex, Math.max(0, exercises.length - 1));
-  } else if (pendingAction.type === 'newWorkout') {
+    pendingAction = null;
+    save();
+    hideModal();
+    render();
+  } else if (pendingAction.type === 'newWorkoutSelector') {
     exercises = [];
     currentIndex = 0;
+    currentTemplateId = null;
+    pendingAction = null;
+    save();
+    hideModal();
+    showWorkoutSelector();
   }
-  pendingAction = null;
-  save();
-  hideModal();
-  render();
 }
 
-// ── Import ────────────────────────────────────────────────────────────────────
+// ── Save workout ──────────────────────────────────────────────────────────────
 
-function tryParseImport(raw) {
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    return { success: false, error: 'Invalid JSON — check the format and try again.' };
-  }
-  if (!parsed || !Array.isArray(parsed.exercises)) {
-    return { success: false, error: 'Expected { "exercises": [...] } at the top level.' };
-  }
-  const imported = [];
-  for (const ex of parsed.exercises) {
-    if (typeof ex.name !== 'string') {
-      return { success: false, error: 'Each exercise must have a "name" string.' };
-    }
-    if (!Array.isArray(ex.sets) || ex.sets.length === 0) {
-      return { success: false, error: `"${ex.name}" must have at least one set.` };
-    }
-    const sets = [];
-    for (const s of ex.sets) {
-      const reps = Math.min(16, Math.max(3, parseInt(s.reps, 10) || 8));
-      sets.push({ id: uid(), weight: s.weight !== undefined ? String(s.weight) : '', reps, done: false });
-    }
-    imported.push({ id: uid(), name: ex.name, sets });
-  }
-  return { success: true, exercises: imported };
-}
+function saveWorkout() {
+  if (isSaving || exercises.length === 0) return;
+  const totalSets = exercises.reduce((n, ex) => n + ex.sets.length, 0);
 
-async function openImport() {
-  // Try clipboard-first
-  try {
-    const text = await navigator.clipboard.readText();
-    const trimmed = (text || '').trim();
-    if (trimmed) {
-      const result = tryParseImport(trimmed);
-      if (result.success) {
-        exercises = result.exercises;
-        currentIndex = 0;
-        save();
-        render();
-        showToast(`Imported ${result.exercises.length} exercise${result.exercises.length !== 1 ? 's' : ''}!`);
-        return;
-      }
-    }
-  } catch (e) {
-    // Clipboard API denied or unavailable
-  }
-  // Fall back to manual paste modal
-  openImportModal();
-}
-
-function openImportModal() {
   removeModal();
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.id = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <h3>Import from Claude</h3>
-      <p class="import-hint">Paste workout JSON below. It will replace your current exercises.</p>
-      <textarea
-        class="import-textarea"
-        id="import-input"
-        placeholder='{"exercises":[{"name":"Bench Press","sets":[{"weight":100,"reps":8},{"weight":105,"reps":6}]}]}'
-        autocorrect="off"
-        autocapitalize="none"
-        spellcheck="false"
-      ></textarea>
-      <div class="import-error" id="import-error"></div>
+      <h3>Save workout?</h3>
+      <p>Save ${totalSets} sets across ${exercises.length} exercise${exercises.length !== 1 ? 's' : ''} to the database.</p>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="hideModal()">Cancel</button>
-        <button class="btn btn-confirm-primary" onclick="confirmImport()">Import</button>
+        <button class="btn btn-confirm-primary" onclick="confirmSave()">Save</button>
       </div>
     </div>`;
   overlay.addEventListener('click', e => { if (e.target === overlay) hideModal(); });
   document.body.appendChild(overlay);
-  setTimeout(() => document.getElementById('import-input').focus(), 50);
 }
 
-function confirmImport() {
-  const raw = (document.getElementById('import-input').value || '').trim();
-  const errEl = document.getElementById('import-error');
-  errEl.textContent = '';
-  const result = tryParseImport(raw);
-  if (!result.success) {
-    errEl.textContent = result.error;
-    return;
-  }
-  exercises = result.exercises;
-  currentIndex = 0;
-  save();
+async function confirmSave() {
   hideModal();
-  render();
-  showToast(`Imported ${result.exercises.length} exercise${result.exercises.length !== 1 ? 's' : ''}!`);
+  if (isSaving) return;
+  isSaving = true;
+  const btnSave = document.getElementById('btn-save');
+  if (btnSave) btnSave.disabled = true;
+
+  const payload = {
+    template_id: currentTemplateId,
+    exercises: exercises.map(ex => ({
+      exercise_id: ex.exerciseId || null,
+      name: ex.name,
+      sets: ex.sets.map(s => ({
+        weight: parseFloat(s.weight) || 0,
+        reps: s.reps,
+      })),
+    })),
+  };
+
+  try {
+    const res = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    showToast(`Saved! ${data.total_sets} sets · ${data.total_volume} kg`);
+    exercises = [];
+    currentIndex = 0;
+    currentTemplateId = null;
+    save();
+    render();
+  } catch (e) {
+    showToast('Save failed — check connection');
+    if (btnSave) btnSave.disabled = false;
+  } finally {
+    isSaving = false;
+    const b = document.getElementById('btn-save');
+    if (b) b.disabled = exercises.length === 0;
+  }
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
 
 function render() {
   const container = document.getElementById('exercises');
+  const btnSave = document.getElementById('btn-save');
+  if (btnSave) btnSave.disabled = exercises.length === 0;
 
   if (exercises.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
         <div class="icon">🏋️</div>
-        <p>No exercises yet.<br>Tap <strong>+ Exercise</strong> to get started.</p>
+        <p>Tap <strong>New Workout</strong> to start,<br>or <strong>+ Exercise</strong> to add manually.</p>
       </div>`;
     return;
   }
 
   currentIndex = Math.max(0, Math.min(currentIndex, exercises.length - 1));
   const ex = exercises[currentIndex];
+
+  let metaParts = [];
+  if (ex.targetMin) metaParts.push(`Target: ${ex.targetMin}–${ex.targetMax} reps`);
+  if (ex.lastRef)   metaParts.push(`Last: ${escHtml(ex.lastRef)}`);
+  const metaHtml = metaParts.length > 0
+    ? `<div class="exercise-meta">${metaParts.join(' · ')}</div>`
+    : '';
 
   container.innerHTML = `
     <div class="exercise-card">
@@ -762,6 +828,7 @@ function render() {
         <button class="btn-icon" onclick="moveExerciseAfter()"
           ${currentIndex >= exercises.length - 1 ? 'disabled' : ''} aria-label="Move after">↓</button>
       </div>
+      ${metaHtml}
       <div class="sets-table">
         ${ex.sets.map((s, i) => `
           <div class="set-row ${s.done ? 'is-done' : ''}">
@@ -808,49 +875,6 @@ function render() {
       <button class="btn btn-ghost btn-sm" onclick="nextExercise()"
         ${currentIndex >= exercises.length - 1 ? 'disabled' : ''}>Next ▶</button>
     </div>`;
-}
-
-// ── Format / Clipboard ────────────────────────────────────────────────────────
-
-function formatWorkout() {
-  const date = new Date().toLocaleDateString('en-US', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-  });
-  const lines = [`Gym Buddy — ${date}`, ''];
-  for (const ex of exercises) {
-    lines.push(ex.name || '(unnamed)');
-    ex.sets.forEach((s, i) => {
-      const w = s.weight !== '' ? `${s.weight} kg` : '— kg';
-      const check = s.done ? ' ✓' : '';
-      lines.push(`  Set ${i + 1}: ${w} × ${s.reps} reps${check}`);
-    });
-    lines.push('');
-  }
-  return lines.join('\n').trimEnd();
-}
-
-async function copyToClipboard() {
-  const text = formatWorkout();
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch (e) {
-    // Fallback for older iOS WebView
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-  }
-  showToast('Copied to clipboard!');
-}
-
-async function sendToClaude() {
-  await copyToClipboard();
-  showToast('Copied — paste into Claude!');
-  setTimeout(() => window.open('https://claude.ai/new', '_blank'), 300);
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -926,6 +950,7 @@ document.getElementById('date').textContent = new Date().toLocaleDateString('en-
 
 load();
 render();
+loadTemplates();
 </script>
 </body>
 </html>
