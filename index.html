@@ -541,7 +541,7 @@ async function loadTemplate(templateId) {
 
     exercises = data.exercises.map(apiEx => {
       const lastSets = apiEx.last_sets;
-      const defaultWeight = lastSets.length > 0
+      const fallbackWeight = lastSets.length > 0
         ? String(lastSets[lastSets.length - 1].weight)
         : '';
       const defaultReps = apiEx.target_reps_min;
@@ -556,9 +556,9 @@ async function loadTemplate(templateId) {
         lastRef = `${weightStr} × ${avgReps} reps (${lastSets.length} sets)`;
       }
 
-      const sets = Array.from({ length: apiEx.default_sets }, () => ({
+      const sets = Array.from({ length: apiEx.default_sets }, (_, i) => ({
         id: uid(),
-        weight: defaultWeight,
+        weight: lastSets[i] ? String(lastSets[i].weight) : fallbackWeight,
         reps: defaultReps,
         done: false,
       }));
