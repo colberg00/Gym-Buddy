@@ -541,24 +541,16 @@ async function loadTemplate(templateId) {
 
     exercises = data.exercises.map(apiEx => {
       const lastSets = apiEx.last_sets;
-      const defaultWeight = lastSets.length > 0
-        ? String(lastSets[lastSets.length - 1].weight)
-        : '';
       const defaultReps = apiEx.target_reps_min;
 
       let lastRef = null;
       if (lastSets.length > 0) {
-        const weights = [...new Set(lastSets.map(s => s.weight))];
-        const weightStr = weights.length === 1
-          ? `${weights[0]} kg`
-          : `${Math.min(...weights)}–${Math.max(...weights)} kg`;
-        const avgReps = Math.round(lastSets.reduce((a, s) => a + s.reps, 0) / lastSets.length);
-        lastRef = `${weightStr} × ${avgReps} reps (${lastSets.length} sets)`;
+        lastRef = `${lastSets.map(s => s.weight).join(', ')} kg`;
       }
 
       const sets = Array.from({ length: apiEx.default_sets }, () => ({
         id: uid(),
-        weight: defaultWeight,
+        weight: '',
         reps: defaultReps,
         done: false,
       }));
