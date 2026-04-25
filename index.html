@@ -545,7 +545,7 @@ async function loadTemplate(templateId) {
 
       let lastRef = null;
       if (lastSets.length > 0) {
-        lastRef = `${lastSets.map(s => s.weight).join(', ')} kg`;
+        lastRef = lastSets.map(s => `${s.weight}x${s.reps}`).join(', ');
       }
 
       const sets = Array.from({ length: apiEx.default_sets }, () => ({
